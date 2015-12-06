@@ -13,6 +13,8 @@ import (
 var Players map[uint16]*Player
 var Units map[uint32]*Unit
 var Structs map[uint32]*Struct
+var Timers map[uint32]*Timer
+var timersI uint32
 var RefT time.Time
 var conn *net.UDPConn
 
@@ -40,6 +42,7 @@ type Unit struct {
 	Vx aFloat64
 	Vy aFloat64
 	MaxSpeed aFloat64
+	MvTimer aUint32
 }
 
 func NewUnit(id uint32) *Unit {
@@ -62,6 +65,9 @@ func NewUnit(id uint32) *Unit {
 	unit.MaxSpeed.class = 0
 	unit.MaxSpeed.id = id
 	unit.MaxSpeed.field = 5
+	unit.MvTimer.class = 0
+	unit.MvTimer.id = id
+	unit.MvTimer.field = 6
 
 	return &unit
 }
@@ -71,6 +77,8 @@ type Struct struct {
 }
 
 type Timer struct {
+	inform []uint16
+	id uint32
 	Start float64
 	Delta float64
 	fn func(args ...interface{})
@@ -78,9 +86,18 @@ type Timer struct {
 	Dead bool
 }
 
-func (self Timer) Go() {
+func (self *Timer) Go() {
+	self.Start = time.Since(RefT).Seconds()
+	for _, i := range (self.inform) {
+		msg := make([]byte, 21)
+		msg[0] = 1 //Class
+		binary.BigEndian.PutUint32(msg[1:5], self.id)
+		binary.BigEndian.PutUint64(msg[5:13], math.Float64bits(self.Start))
+		binary.BigEndian.PutUint64(msg[13:21], math.Float64bits(self.Delta))
+		res := encryption.Encrypt(msg, Players[i].Key)
+		conn.WriteTo(res, Players[i].Addr)
+	}
 	go func(){
-		self.Start = time.Since(RefT).Seconds()
 		time.Sleep(time.Duration(float64(time.Second)*self.Delta)) //Damn casting
 		if self.Dead {
 			return
@@ -88,6 +105,17 @@ func (self Timer) Go() {
 			self.fn(self.args...)
 		}
 	} ()
+}
+
+func (self *Timer) Die() {
+	self.Dead = true
+	for _, i := range (self.inform) {
+		msg := make([]byte, 21)
+		msg[0] = 1 //Class
+		binary.BigEndian.PutUint32(msg[1:5], self.id)
+		res := encryption.Encrypt(msg, Players[i].Key)
+		conn.WriteTo(res, Players[i].Addr)
+	}
 }
 
 type a struct {
@@ -114,9 +142,15 @@ type aUint32 struct {
 }
 func (self *aUint32) Update(value uint32) {
 	self.A = value
-/*	for i := range inform {
-
-	}*/
+	for _, i := range self.inform {
+		msg := make([]byte, 10)
+		msg[0] = self.class
+		binary.BigEndian.PutUint32(msg[1:5], self.id)
+		msg[5]=self.field
+		binary.BigEndian.PutUint32(msg[6:10], self.A)
+		res := encryption.Encrypt(msg, Players[i].Key)
+		conn.WriteTo(res, Players[i].Addr)
+	}
 }
 
 type aUint16 struct {
@@ -175,6 +209,8 @@ func Init(sCon *net.UDPConn) {
 	Players = make(map[uint16]*Player)
 	Units = make(map[uint32]*Unit)
 	Structs = make(map[uint32]*Struct)
+	Timers = make(map[uint32]*Timer)
+	timersI = 0
 	Players[0] = &Player{Name:"root",
 		Key:[]byte{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16}}
 
@@ -183,6 +219,9 @@ func Init(sCon *net.UDPConn) {
 	Units[0].MaxSpeed.A = 10
 	Units[0].Vx.inform = []uint16{0}
 	Units[0].Vy.inform = []uint16{0}
+	Units[0].X.inform = []uint16{0}
+	Units[0].Y.inform = []uint16{0}
+	Units[0].MvTimer.inform = []uint16{0}
 
 	Structs[0] = &Struct{}
 
@@ -208,6 +247,11 @@ func ReqSET2(msg []byte, pId uint16) error {
 			if pId != 0 {
 				return errors.New("Can't change Unit.X/Y")
 			}
+			x := math.Float64frombits(binary.BigEndian.Uint64(msg[6:14]))
+			y := math.Float64frombits(binary.BigEndian.Uint64(msg[14:22]))
+			unit.X.Update(x)
+			unit.Y.Update(y)
+
 
 		case 1: //Vx,Vy
 			vx := math.Float64frombits(binary.BigEndian.Uint64(msg[6:14]))
@@ -217,6 +261,22 @@ func ReqSET2(msg []byte, pId uint16) error {
 			}
 			unit.Vx.Update(vx)
 			unit.Vy.Update(vy)
+			updateFn := func (id ...interface{}) {
+				unit := Units[id[0].(uint32)]
+				unit.Lock()
+				defer unit.Unlock()
+				//TODO: Check for confilcts
+				unit.X.Update(unit.X.A+unit.Vx.A)
+				unit.Y.Update(unit.Y.A+unit.Vy.A)}
+			Timers[timersI] = &Timer{fn:updateFn,
+				args:[]interface{}{unitId},
+				Delta:1.0,
+				id:timersI,
+				inform:[]uint16{0}}
+			Timers[timersI].Go()
+			unit.MvTimer.Update(timersI)
+			timersI++
+
 		}
 	}
 	return nil

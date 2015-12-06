@@ -5,6 +5,7 @@ import (
 	"fmt"
     "./encryption"
     "encoding/binary"
+    "math"
 )
 
 const DIAL_PORT=":8888"
@@ -31,11 +32,20 @@ func main() {
             switch msg[0] {
             case 0:
                 fmt.Printf("Unit[")
+                id := binary.BigEndian.Uint32(msg[1:5])
+                fmt.Printf("%d].%d := %x\n", id, msg[5], msg[6:])
+            case 1:
+                fmt.Printf("Timer[")
+                id := binary.BigEndian.Uint32(msg[1:5])
+                start := math.Float64frombits(binary.BigEndian.Uint64(msg[5:13]))
+                delta := math.Float64frombits(binary.BigEndian.Uint64(msg[13:21]))
+                fmt.Printf("%d] := %f->%f\n", id, start, delta)
+                break
             default:
                 fmt.Printf("%d[",msg[0])
+                id := binary.BigEndian.Uint32(msg[1:5])
+                fmt.Printf("%d].%d := %x\n", id, msg[5], msg[6:])
             }
-            id := binary.BigEndian.Uint32(msg[1:5])
-            fmt.Printf("%d].%d := %v\n", id, msg[5], msg[6:])
         }} ()
     
     for {

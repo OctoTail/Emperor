@@ -56,7 +56,7 @@ func handleReq(n int, addr net.Addr, buf []byte, sCon *net.UDPConn){
 			log.Printf("%v %s\n", addr, err)
 			return
 		}
-		log.Printf("%v %v\n", addr, text)
+		log.Printf("%v %d\n", addr, text)
 		data.Players[pId].Addr = addr
 		switch text[0] {
 		case 1: //SET2
