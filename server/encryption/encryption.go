@@ -93,15 +93,15 @@ func LoadRSA(keyfile string) (*rsa.PrivateKey, []byte, error) {
 }
 
 func Decrypt(buf, key []byte) ([]byte, error) {
-	iv := buf[2:AES_LENGTH + 2]
-	textMAC := buf[AES_LENGTH + 2:AES_LENGTH + 2 + HMAC_LENGTH]
-	ciphertext := buf[AES_LENGTH + 2 + HMAC_LENGTH:]
+	iv := buf[:AES_LENGTH]
+	textMAC := buf[AES_LENGTH:AES_LENGTH + HMAC_LENGTH]
+	ciphertext := buf[AES_LENGTH + HMAC_LENGTH:]
 	text, err := decryptAES(key, iv, ciphertext)
 	if err != nil {
-		return nil, errors.New("sent an incorrectly encrypted message (AES)")
+		return nil, errors.New("Sent an incorrectly encrypted message (AES)")
 	}
 	if !checkMAC(text, textMAC, key) {
-		return nil, errors.New("sent an incorrect HMAC")
+		return nil, errors.New("Sent an incorrect HMAC")
 	}
 	return text, nil
 }

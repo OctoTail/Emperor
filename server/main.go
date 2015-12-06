@@ -27,7 +27,7 @@ func checkWarn(err error) error{
 
 func handleReq(n int, addr net.Addr, buf []byte, sCon *net.UDPConn){
 	if n < 2 {
-		log.Printf("%v sent less than 2 bytes\n", addr)
+		log.Printf("%v Sent less than 2 bytes\n", addr)
 		return
 	}
 	pId := binary.BigEndian.Uint16(buf[:2])
@@ -40,40 +40,51 @@ func handleReq(n int, addr net.Addr, buf []byte, sCon *net.UDPConn){
 		ciphertext := buf[2:n]
 		text, err := encryption.DecryptRSA(ciphertext)
 		if err != nil{
-			log.Printf("%v sent an incorrectly encrypted message (RSA)\n")
+			log.Printf("%v Incorrectly encrypted message (RSA)\n")
 		}
 		log.Println(text)
 	case n >= 2*encryption.AES_LENGTH + 2 + encryption.HMAC_LENGTH: //Request
 		pId-- //Switch to real pId
 		if int(pId) >= len(data.Players) {
-			log.Printf("%v sent an invalid player id\n", addr)
+			print(pId)
+			log.Printf("%v Sent an invalid player id\n", addr)
 			return
 		}
 		key := data.Players[pId].Key
-		text, err := encryption.Decrypt(buf[:n], key)
+		text, err := encryption.Decrypt(buf[2:n], key)
 		if err != nil {
 			log.Printf("%v %s\n", addr, err)
 			return
 		}
-		log.Println(text)
+		log.Printf("%v %v\n", addr, text)
+		data.Players[pId].Addr = addr
+		switch text[0] {
+		case 1: //SET2
+			if err := data.ReqSET2(text[1:], pId); err != nil {
+				log.Printf("%v %s\n", addr, err)
+			}
+		default:
+			log.Printf("%v Unknown request: %x", addr, text[0])
+		}
 
 		//Reply
-		res := encryption.Encrypt([]byte{1,2,3,5,8},key)
+		/*res := encryption.Encrypt([]byte{1,2,3,5,8},key)
 		_, err = sCon.WriteTo(res, addr)
-		checkWarn(err)
+		checkWarn(err)*/
 
 	default:
-		log.Printf("%v sent an incorrectly encrypted message\n", addr)
+		log.Printf("%v Incorrectly encrypted message\n", addr)
 	}
 }
 
+
 func main() {
 	encryption.LoadRSA("private.pem")
-	data.Init()
 	sAddr,err := net.ResolveUDPAddr("udp", LISTEN_PORT)
 	checkFatal(err)
 	sCon,err := net.ListenUDP("udp", sAddr)
 	checkFatal(err)
+	data.Init(sCon)
 	defer sCon.Close()
 	buf := make([]byte,1024)
 	for {
