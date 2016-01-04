@@ -15,8 +15,10 @@ var Units map[uint32]*Unit
 var Structs map[uint32]*Struct
 var Timers map[uint32]*Timer
 var timersI uint32
+var fovUnits map[uint32]map[uint32]bool
 var RefT time.Time
 var conn *net.UDPConn
+
 
 type Player struct {
 	Mac [6]byte
@@ -42,7 +44,7 @@ type Unit struct {
 	Vx aFloat64
 	Vy aFloat64
 	MaxSpeed aFloat64
-	MvTimer aUint32
+	//MvTimer aUint32
 }
 
 func NewUnit(id uint32) *Unit {
@@ -65,9 +67,9 @@ func NewUnit(id uint32) *Unit {
 	unit.MaxSpeed.class = 0
 	unit.MaxSpeed.id = id
 	unit.MaxSpeed.field = 5
-	unit.MvTimer.class = 0
+	/*unit.MvTimer.class = 0
 	unit.MvTimer.id = id
-	unit.MvTimer.field = 6
+	unit.MvTimer.field = 6*/
 
 	return &unit
 }
@@ -77,7 +79,7 @@ type Struct struct {
 }
 
 type Timer struct {
-	inform []uint16
+	inform map[uint16]uint
 	id uint32
 	Start float64
 	Delta float64
@@ -88,14 +90,17 @@ type Timer struct {
 
 func (self *Timer) Go() {
 	self.Start = time.Since(RefT).Seconds()
-	for _, i := range (self.inform) {
+	for k, v := range (self.inform) {
+		if (v == 0) {
+			continue
+		}
 		msg := make([]byte, 21)
 		msg[0] = 1 //Class
 		binary.BigEndian.PutUint32(msg[1:5], self.id)
 		binary.BigEndian.PutUint64(msg[5:13], math.Float64bits(self.Start))
 		binary.BigEndian.PutUint64(msg[13:21], math.Float64bits(self.Delta))
-		res := encryption.Encrypt(msg, Players[i].Key)
-		conn.WriteTo(res, Players[i].Addr)
+		res := encryption.Encrypt(msg, Players[k].Key)
+		conn.WriteTo(res, Players[k].Addr)
 	}
 	go func(){
 		time.Sleep(time.Duration(float64(time.Second)*self.Delta)) //Damn casting
@@ -109,17 +114,20 @@ func (self *Timer) Go() {
 
 func (self *Timer) Die() {
 	self.Dead = true
-	for _, i := range (self.inform) {
+	for k, v := range (self.inform) {
+		if (v == 0) {
+			continue
+		}
 		msg := make([]byte, 21)
 		msg[0] = 1 //Class
 		binary.BigEndian.PutUint32(msg[1:5], self.id)
-		res := encryption.Encrypt(msg, Players[i].Key)
-		conn.WriteTo(res, Players[i].Addr)
+		res := encryption.Encrypt(msg, Players[k].Key)
+		conn.WriteTo(res, Players[k].Addr)
 	}
 }
 
 type a struct {
-	inform []uint16
+	inform map[uint16]uint
 	class byte
 	id uint32
 	field byte
@@ -142,16 +150,31 @@ type aUint32 struct {
 }
 func (self *aUint32) Update(value uint32) {
 	self.A = value
-	for _, i := range self.inform {
-		msg := make([]byte, 10)
-		msg[0] = self.class
-		binary.BigEndian.PutUint32(msg[1:5], self.id)
-		msg[5]=self.field
-		binary.BigEndian.PutUint32(msg[6:10], self.A)
-		res := encryption.Encrypt(msg, Players[i].Key)
-		conn.WriteTo(res, Players[i].Addr)
+	for k, v := range self.inform {
+		if (v == 0) {
+			continue
+		}
+        self.send_inform(k)
 	}
 }
+
+func (self *aUint32) SetInform(pId uint16) {
+    self.inform[pId]++
+    if self.inform[pId] == 1 {
+        self.send_inform(pId)
+    }
+}
+
+func (self *aUint32) send_inform(pId uint16) {
+    msg := make([]byte, 10)
+    msg[0] = self.class
+    binary.BigEndian.PutUint32(msg[1:5], self.id)
+    msg[5]=self.field
+    binary.BigEndian.PutUint32(msg[6:10], self.A)
+    res := encryption.Encrypt(msg, Players[pId].Key)
+    conn.WriteTo(res, Players[pId].Addr)
+}
+
 
 type aUint16 struct {
 	a
@@ -171,15 +194,29 @@ type aFloat64 struct {
 
 func (self *aFloat64) Update(value float64) {
 	self.A = value
-	for _, i := range self.inform {
-		msg := make([]byte, 14)
-		msg[0] = self.class
-		binary.BigEndian.PutUint32(msg[1:5], self.id)
-		msg[5]=self.field
-		binary.BigEndian.PutUint64(msg[6:14], math.Float64bits(value))
-		res := encryption.Encrypt(msg, Players[i].Key)
-		conn.WriteTo(res, Players[i].Addr)
+	for k, v := range self.inform {
+		if (v == 0) {
+			continue
+		}
+        self.send_inform(k)
 	}
+}
+
+func (self *aFloat64) SetInform(pId uint16) {
+    self.inform[pId]++
+    if self.inform[pId] == 1 {
+        self.send_inform(pId)
+    }
+}
+
+func (self *aFloat64) send_inform(pId uint16) {
+    msg := make([]byte, 14)
+    msg[0] = self.class
+    binary.BigEndian.PutUint32(msg[1:5], self.id)
+    msg[5]=self.field
+    binary.BigEndian.PutUint64(msg[6:14], math.Float64bits(self.A))
+    res := encryption.Encrypt(msg, Players[pId].Key)
+    conn.WriteTo(res, Players[pId].Addr)
 }
 
 type aPtrs struct {
@@ -210,6 +247,7 @@ func Init(sCon *net.UDPConn) {
 	Units = make(map[uint32]*Unit)
 	Structs = make(map[uint32]*Struct)
 	Timers = make(map[uint32]*Timer)
+	fovUnits = make(map[uint32]map[uint32]bool)
 	timersI = 0
 	Players[0] = &Player{Name:"root",
 		Key:[]byte{1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16}}
@@ -217,11 +255,24 @@ func Init(sCon *net.UDPConn) {
 	Units[0] = NewUnit(0)
 	Units[0].Owner.A = 0
 	Units[0].MaxSpeed.A = 10
-	Units[0].Vx.inform = []uint16{0}
-	Units[0].Vy.inform = []uint16{0}
-	Units[0].X.inform = []uint16{0}
-	Units[0].Y.inform = []uint16{0}
-	Units[0].MvTimer.inform = []uint16{0}
+	Units[0].Vx.inform = map[uint16]uint{0:1}
+	Units[0].Vy.inform = map[uint16]uint{0:1}
+	Units[0].X.inform = map[uint16]uint{0:1}
+	Units[0].Y.inform = map[uint16]uint{0:1}
+	//Units[0].MvTimer.inform = map[uint16]uint{0:1}
+
+	Units[1] = NewUnit(1)
+	Units[1].Owner.A = 1
+	Units[1].MaxSpeed.A = 10
+	Units[1].Vx.inform = map[uint16]uint{1:1}
+	Units[1].Vy.inform = map[uint16]uint{1:1}
+	Units[1].X.inform = map[uint16]uint{1:1}
+	Units[1].Y.inform = map[uint16]uint{1:1}
+	//Units[1].MvTimer.inform = map[uint16]uint{1:1}
+
+    for i := range Units {
+        fovUnits[i] = make(map[uint32]bool)
+    }
 
 	Structs[0] = &Struct{}
 
@@ -259,6 +310,7 @@ func ReqSET2(msg []byte, pId uint16) error {
 			if math.Sqrt(vx*vx + vy*vy) > unit.MaxSpeed.A {
 				return errors.New("Desired speed > Unit.MaxSpeed")
 			}
+			deltafov(unitId, 5, vx, vy)
 			unit.Vx.Update(vx)
 			unit.Vy.Update(vy)
 			updateFn := func (id ...interface{}) {
@@ -272,12 +324,44 @@ func ReqSET2(msg []byte, pId uint16) error {
 				args:[]interface{}{unitId},
 				Delta:1.0,
 				id:timersI,
-				inform:[]uint16{0}}
+				inform:unit.Vx.inform}
 			Timers[timersI].Go()
-			unit.MvTimer.Update(timersI)
+			//unit.MvTimer.Update(timersI)
 			timersI++
 
 		}
 	}
 	return nil
+}
+
+func deltafov(uId uint32, r, dx, dy float64) { //TODO
+	unit := Units[uId]
+	for i, u := range Units {
+		if fovUnits[uId][i] {
+			continue
+		}
+		if math.Pow(u.X.A-unit.X.A-dx, 2) + math.Pow(u.Y.A-unit.Y.A-dy, 2) <= r {
+			fovUnits[uId][i] = true
+            u.X.SetInform(unit.Owner.A)
+            u.Y.SetInform(unit.Owner.A)
+			//I see him now
+		}
+	}
+	for k, v := range fovUnits[uId] {
+		if !v {
+			continue
+		}
+		if math.Pow(Units[k].X.A-unit.X.A-dx, 2) + math.Pow(Units[k].Y.A-unit.Y.A-dy, 2) > r {
+			fovUnits[uId][k] = false
+            Units[k].X.inform[unit.Owner.A]--
+            if Units[k].X.inform[unit.Owner.A] <= 0 {
+                delete(Units[k].X.inform, unit.Owner.A)
+            }
+            Units[k].Y.inform[unit.Owner.A]--
+            if Units[k].Y.inform[unit.Owner.A] <= 0 {
+                delete(Units[k].Y.inform, unit.Owner.A)
+            }
+			//I don't see him anymore
+	    }
+    }
 }

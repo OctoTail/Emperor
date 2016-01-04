@@ -52,7 +52,7 @@ func main() {
         input := make([]byte,0)
         for {
             var x byte
-            _, err := fmt.Scanf("%d",&x)
+            _, err := fmt.Scanf("%x",&x)
             if err != nil {
                 break
             }
